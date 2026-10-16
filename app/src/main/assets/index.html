@@ -5495,6 +5495,10 @@ window.applyUserRole = function(role) {
     historyStack = [];
     showPage("home");
   }
+
+  if (typeof window.checkAndTriggerDailyAdMobPopup === "function") {
+    window.checkAndTriggerDailyAdMobPopup();
+  }
 };
 
 // ================= Firebase Authentication & User State System =================
@@ -10722,31 +10726,49 @@ let adSearchTimeoutId = null;
 let currentAdStepResolved = false;
 
 window.checkAndTriggerDailyAdMobPopup = function() {
-  // Never show ad before user enters authentication code and role is determined
-  if (!window.currentUserRole) return;
+  if (!window.currentUserRole) {
+    try {
+      window.currentUserRole = localStorage.getItem("user_role") || "USER";
+    } catch (_) {
+      window.currentUserRole = "USER";
+    }
+  }
 
-  const lastCompleted = parseInt(localStorage.getItem("admob_last_completed_timestamp") || "0", 10);
   const now = Date.now();
-  if (now - lastCompleted < ONE_DAY_MS) {
-    // Already completed within 24 hours
+  let lastShown = parseInt(localStorage.getItem("admob_last_shown_timestamp") || "0", 10);
+
+  // If not yet saved under admob_last_shown_timestamp, check legacy timestamps so existing users aren't re-prompted prematurely
+  if (!lastShown) {
+    const legacyCompleted = parseInt(localStorage.getItem("admob_last_completed_timestamp") || "0", 10);
+    const legacyDismissed = parseInt(localStorage.getItem("admob_last_dismissed_timestamp") || "0", 10);
+    const legacyTime = Math.max(legacyCompleted, legacyDismissed);
+    if (legacyTime > 0) {
+      lastShown = legacyTime;
+      try {
+        localStorage.setItem("admob_last_shown_timestamp", legacyTime.toString());
+      } catch (_) {}
+    }
+  }
+
+  // Do not show again before 24 full hours have elapsed since last appearance
+  if (lastShown > 0 && (now - lastShown) < ONE_DAY_MS) {
     return;
   }
-  const lastDismissed = parseInt(localStorage.getItem("admob_last_dismissed_timestamp") || "0", 10);
-  if (now - lastDismissed < ONE_DAY_MS) {
-    // Dismissed today
-    return;
-  }
-  // Show the popup once per day
+
+  // Show the popup upon first entry or after 24 full hours have passed
   const popup = document.getElementById("adDailyPopup");
   if (popup && !isAdFlowActive) {
     popup.style.display = "flex";
+    // Calculate 24 hours strictly from the time of appearance
+    try {
+      localStorage.setItem("admob_last_shown_timestamp", now.toString());
+    } catch (_) {}
   }
 };
 
 window.dismissDailyAdPopup = function() {
   const popup = document.getElementById("adDailyPopup");
   if (popup) popup.style.display = "none";
-  localStorage.setItem("admob_last_dismissed_timestamp", Date.now().toString());
 };
 
 window.startAdWatchingFlow = function() {
@@ -10878,9 +10900,9 @@ function handleAdTimeoutOrNoFill() {
 
 function completeAllAdsFlow() {
   isAdFlowActive = false;
-  // Mark 24 hours lock
-  localStorage.setItem("admob_last_completed_timestamp", Date.now().toString());
-  localStorage.removeItem("admob_internal_ad_count");
+  try {
+    localStorage.removeItem("admob_internal_ad_count");
+  } catch (_) {}
   
   updateAdWatchUI(5, "تم الانتهاء بنجاح! 🎉", "شكراً جزيلاً لدعمكم تطبيق BLACK ANIME");
   
@@ -10897,6 +10919,20 @@ setTimeout(() => {
     checkAndTriggerDailyAdMobPopup();
   }
 }, 1200);
+
+// Check and trigger daily ad prompt upon returning to the app if 24 hours have passed
+document.addEventListener("visibilitychange", function() {
+  if (document.visibilityState === "visible") {
+    if (typeof window.checkAndTriggerDailyAdMobPopup === "function") {
+      window.checkAndTriggerDailyAdMobPopup();
+    }
+  }
+});
+window.addEventListener("focus", function() {
+  if (typeof window.checkAndTriggerDailyAdMobPopup === "function") {
+    window.checkAndTriggerDailyAdMobPopup();
+  }
+});
 
 // ================= Alternative Titles (Search Aliases) Controller =================
 window.tempAltTitles = [];
